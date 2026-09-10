@@ -22,15 +22,21 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property var activeScreen: bongo ? bongo.targetScreen() : null
   readonly property int positionXValue: bongo && activeScreen
-    ? Math.round(bongo.resolvedX(activeScreen)) : 0
+    ? Math.round(bongo.resolvedX(activeScreen))
+    : Math.max(0, setting("positionX", 0))
   readonly property int positionYValue: bongo && activeScreen
-    ? Math.round(bongo.resolvedY(activeScreen)) : 0
+    ? Math.round(bongo.resolvedY(activeScreen))
+    : Math.max(0, setting("positionY", 0))
   readonly property int positionXMaximum: bongo && activeScreen
     ? Math.max(0, activeScreen.width - bongo.catWidth) : 8000
   readonly property int positionYMaximum: bongo && activeScreen
     ? Math.max(0, activeScreen.height - bongo.catHeight) : 8000
   readonly property bool presentationSuppressed: bongo
     ? bongo.presentationSuppressed : false
+  readonly property bool catOn: bongo ? bongo.catActive : setting("active", true) !== false
+  readonly property int catSize: bongo ? bongo.catWidth : setting("catWidth", 280)
+  readonly property string catColorMode: bongo ? bongo.colorMode : setting("colorMode", "default")
+  readonly property bool catLocked: bongo ? bongo.positionLocked : setting("positionLocked", true) !== false
   property var panelSessionService: null
 
   implicitWidth: button.implicitWidth
@@ -52,6 +58,27 @@ Panel {
   onBongoChanged: if (opened) beginPanelSession()
   onPresentationSuppressedChanged: if (presentationSuppressed) close()
   Component.onDestruction: abandonPanelSession()
+
+  function setting(key, fallback) {
+    if (bongo && bongo[key] !== undefined && bongo[key] !== null)
+      return bongo[key]
+    if (settings && settings[key] !== undefined && settings[key] !== null)
+      return settings[key]
+    return fallback
+  }
+
+  function persist(patch) {
+    if (bongo) return false
+    var host = bar && bar.shell
+    if (!host || typeof host.updateEntryInline !== "function") return false
+    var next = { id: moduleName }
+    var src = settings || {}
+    for (var key in src) {
+      if (key !== "id") next[key] = src[key]
+    }
+    for (var patchKey in patch) next[patchKey] = patch[patchKey]
+    return host.updateEntryInline(moduleName, next)
+  }
 
   function beginPanelSession() {
     if (panelSessionService || !bongo
@@ -76,11 +103,40 @@ Panel {
 
   function toggleActive() {
     if (bongo) bongo.setCatActive(!bongo.catActive)
+    else persist({ active: !catOn })
   }
 
   function moveFromPanel(dx, dy) {
-    if (!bongo) return
-    bongo.setPosition(positionXValue + dx, positionYValue + dy)
+    if (bongo) bongo.setPosition(positionXValue + dx, positionYValue + dy)
+    else persist({
+      positionX: Math.max(0, positionXValue + dx),
+      positionY: Math.max(0, positionYValue + dy)
+    })
+  }
+
+  function applyCatWidth(value) {
+    if (bongo) bongo.setCatWidth(value)
+    else persist({ catWidth: Math.max(60, Math.min(640, parseInt(value, 10) || 280)) })
+  }
+
+  function applyColorMode(value) {
+    if (bongo) bongo.setColorMode(value)
+    else persist({ colorMode: value })
+  }
+
+  function applyPositionLocked(value) {
+    if (bongo) bongo.setPositionLocked(value)
+    else persist({ positionLocked: !!value })
+  }
+
+  function applyPosition(x, y) {
+    if (bongo) bongo.setPosition(x, y)
+    else persist({ positionX: Math.max(0, x), positionY: Math.max(0, y) })
+  }
+
+  function applyCustomColor(value) {
+    if (bongo) bongo.setCustomColor(value)
+    else persist({ customColor: value, colorMode: "hex" })
   }
 
   component PanelGlyphButton: Button {
@@ -246,16 +302,17 @@ Panel {
     fixedWidth: Style.bar.iconSlot
     labelVisible: false
     hasVisualContent: true
-    active: root.bongo && root.bongo.catActive
-    tooltipText: !root.bongo ? "Loading Bongo Cat…"
-      : root.bongo.catActive ? "Bongo Cat · " + root.bongo.inputStatusText()
-      : "Bongo Cat is off"
+    active: root.catOn
+    tooltipText: root.bongo
+      ? (root.bongo.catActive ? "Bongo Cat · " + root.bongo.inputStatusText()
+        : "Bongo Cat is off")
+      : (root.catOn ? "Bongo Cat" : "Bongo Cat is off")
 
     onPressed: function(buttonCode) {
-      if (!root.bongo) return
       if (buttonCode === Qt.RightButton) root.toggleActive()
-      else if (buttonCode === Qt.MiddleButton) root.bongo.testAnimation()
-      else root.toggle()
+      else if (buttonCode === Qt.MiddleButton) {
+        if (root.bongo) root.bongo.testAnimation()
+      } else root.toggle()
     }
 
     OpticalGlyph {
@@ -267,7 +324,7 @@ Panel {
       fontSize: Style.font.iconLarge
       color: root.bongo && root.bongo.catColorized
         ? root.bongo.catTint : root.foreground
-      opacity: root.bongo && root.bongo.catActive ? 1 : 0.38
+      opacity: root.catOn ? 1 : 0.38
     }
   }
 
@@ -295,13 +352,15 @@ Panel {
         root.moveFromPanel(dx * 10, dy * 10)
       }
       onTextKey: function(text) {
-        if (!root.bongo) return
-        if (text === "t" || text === "T") root.bongo.testAnimation()
-        else if (text === "p" || text === "P")
-          root.bongo.setPositionLocked(!root.bongo.positionLocked)
-        else if (text === "r" || text === "R") {
-          root.bongo.scanDevices()
-          root.bongo.updateInputProcess()
+        if (text === "t" || text === "T") {
+          if (root.bongo) root.bongo.testAnimation()
+        } else if (text === "p" || text === "P") {
+          root.applyPositionLocked(!root.catLocked)
+        } else if (text === "r" || text === "R") {
+          if (root.bongo) {
+            root.bongo.scanDevices()
+            root.bongo.updateInputProcess()
+          }
         }
       }
 
@@ -348,7 +407,8 @@ Panel {
                 font.bold: true
               }
               Text {
-                text: root.bongo ? root.bongo.inputStatusText() : "Loading…"
+                text: root.bongo ? root.bongo.inputStatusText()
+                  : (root.catOn ? "Using saved settings" : "Off")
                 color: Qt.darker(root.foreground, 1.25)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -370,8 +430,8 @@ Panel {
                 height: Style.spacing.controlHeight
                 glyph: "\uf011"
                 iconSize: Math.max(1, Style.font.iconLarge - 1)
-                tooltipText: root.bongo && root.bongo.catActive ? "Disable" : "Enable"
-                selected: root.bongo && root.bongo.catActive
+                tooltipText: root.catOn ? "Disable" : "Enable"
+                selected: root.catOn
                 glyphColor: selected
                   ? Style.selectedStateColor(foreground, accent) : root.dim
                 bordered: true
@@ -385,24 +445,21 @@ Panel {
                 id: lockButton
                 width: Style.spacing.controlHeight
                 height: Style.spacing.controlHeight
-                glyph: root.bongo && root.bongo.positionLocked ? "\uf023" : "\uf09c"
+                glyph: root.catLocked ? "\uf023" : "\uf09c"
                 iconSize: Math.max(1, Style.font.iconLarge - 1)
-                tooltipText: root.bongo && root.bongo.positionLocked
+                tooltipText: root.catLocked
                   ? "Locked · Click to unlock" : "Unlocked · Click to lock"
-                selected: root.bongo && root.bongo.positionLocked
+                selected: root.catLocked
                 glyphColor: selected
                   ? Style.selectedStateColor(foreground, accent) : root.accent
-                enabled: root.bongo && root.bongo.catActive
+                enabled: root.catOn
                 opacity: enabled ? 1 : 0.38
                 bordered: true
                 focusable: true
                 foreground: root.foreground
                 accent: root.accent
                 fontFamily: root.fontFamily
-                onClicked: {
-                  if (root.bongo)
-                    root.bongo.setPositionLocked(!root.bongo.positionLocked)
-                }
+                onClicked: root.applyPositionLocked(!root.catLocked)
               }
               PanelGlyphButton {
                 id: testButton
@@ -447,14 +504,17 @@ Panel {
               bordered: true
               focusable: true
               foreground: root.foreground
-              onClicked: if (root.bongo) root.bongo.resizeCat(-20)
+              onClicked: {
+                if (root.bongo) root.bongo.resizeCat(-20)
+                else root.applyCatWidth(root.catSize - 20)
+              }
             }
             PanelSlider {
               width: Math.max(80, parent.width - 38 - sizeDownButton.width
                 - sizeUpButton.width - sizeValue.width - parent.spacing * 4)
               anchors.verticalCenter: parent.verticalCenter
               bar: root.bar
-              value: root.bongo ? root.bongo.catWidth : 280
+              value: root.catSize
               minimum: root.bongo ? root.bongo.minimumCatWidth : 60
               maximum: 640
               step: 20
@@ -463,14 +523,14 @@ Panel {
                 if (root.bongo) root.bongo.previewCatWidth(next)
               }
               onReleased: function(next) {
-                if (root.bongo) root.bongo.setCatWidth(next)
+                root.applyCatWidth(next)
               }
             }
             Text {
               id: sizeValue
               width: 52
               anchors.verticalCenter: parent.verticalCenter
-              text: (root.bongo ? root.bongo.catWidth : 280) + " px"
+              text: root.catSize + " px"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
@@ -485,7 +545,10 @@ Panel {
               bordered: true
               focusable: true
               foreground: root.foreground
-              onClicked: if (root.bongo) root.bongo.resizeCat(20)
+              onClicked: {
+                if (root.bongo) root.bongo.resizeCat(20)
+                else root.applyCatWidth(root.catSize + 20)
+              }
             }
           }
 
@@ -497,9 +560,9 @@ Panel {
               { value: "280", label: "Medium" },
               { value: "420", label: "Large" }
             ]
-            value: root.bongo ? String(root.bongo.catWidth) : "280"
+            value: String(root.catSize)
             onChanged: function(next) {
-              if (root.bongo) root.bongo.setCatWidth(parseInt(next, 10))
+              root.applyCatWidth(parseInt(next, 10))
             }
           }
 
@@ -522,15 +585,15 @@ Panel {
                 { value: "theme", label: "Theme" },
                 { value: "hex", label: "Hex" }
               ]
-              value: root.bongo ? root.bongo.colorMode : "default"
+              value: root.catColorMode
               onChanged: function(next) {
-                if (root.bongo) root.bongo.setColorMode(next)
+                root.applyColorMode(next)
               }
             }
           }
 
           Row {
-            visible: root.bongo && root.bongo.colorMode === "hex"
+            visible: root.catColorMode === "hex"
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: Style.space(8)
 
@@ -538,14 +601,14 @@ Panel {
               width: 26
               height: 26
               radius: Style.cornerRadius
-              color: root.bongo ? root.bongo.customColor : "#f0abab"
+              color: root.setting("customColor", "#f0abab")
               border.width: 1
               border.color: root.foreground
             }
             TextField {
               id: hexField
               width: 130
-              text: root.bongo ? root.bongo.customColor : "#f0abab"
+              text: root.setting("customColor", "#f0abab")
               placeholderText: "#RRGGBB"
               foreground: root.foreground
               accent: root.accent
@@ -553,13 +616,11 @@ Panel {
               validator: RegularExpressionValidator {
                 regularExpression: /^#[0-9a-fA-F]{6}$/
               }
-              onTextEdited: if (root.bongo && acceptableInput)
-                root.bongo.setCustomColor(text)
-              onEditingFinished: if (root.bongo && acceptableInput)
-                root.bongo.setCustomColor(text)
+              onTextEdited: if (acceptableInput) root.applyCustomColor(text)
+              onEditingFinished: if (acceptableInput) root.applyCustomColor(text)
               onActiveFocusChanged: {
-                if (!activeFocus && !acceptableInput && root.bongo)
-                  text = root.bongo.customColor
+                if (!activeFocus && !acceptableInput)
+                  text = root.setting("customColor", "#f0abab")
               }
             }
           }
@@ -577,7 +638,7 @@ Panel {
             NumberField {
               id: positionXField
               width: (parent.width - parent.spacing) / 2
-              enabled: root.bongo && root.bongo.catActive
+              enabled: root.catOn
               label: ""
               value: root.positionXValue
               from: 0
@@ -589,7 +650,7 @@ Panel {
               accent: root.accent
               fontFamily: root.fontFamily
               onModified: function(next) {
-                if (root.bongo) root.bongo.setPosition(next, root.positionYValue)
+                root.applyPosition(next, root.positionYValue)
               }
 
               Text {
@@ -608,7 +669,7 @@ Panel {
             NumberField {
               id: positionYField
               width: (parent.width - parent.spacing) / 2
-              enabled: root.bongo && root.bongo.catActive
+              enabled: root.catOn
               label: ""
               value: root.positionYValue
               from: 0
@@ -620,7 +681,7 @@ Panel {
               accent: root.accent
               fontFamily: root.fontFamily
               onModified: function(next) {
-                if (root.bongo) root.bongo.setPosition(root.positionXValue, next)
+                root.applyPosition(root.positionXValue, next)
               }
 
               Text {
@@ -651,7 +712,7 @@ Panel {
               glyph: "\uf060"
               iconSize: Style.font.icon
               tooltipText: "10 px left"
-              enabled: root.bongo && root.bongo.catActive
+              enabled: root.catOn
               opacity: enabled ? 1 : 0.38
               bordered: true
               focusable: true
@@ -666,7 +727,7 @@ Panel {
               glyph: "\uf062"
               iconSize: Style.font.icon
               tooltipText: "10 px up"
-              enabled: root.bongo && root.bongo.catActive
+              enabled: root.catOn
               opacity: enabled ? 1 : 0.38
               bordered: true
               focusable: true
@@ -681,7 +742,7 @@ Panel {
               glyph: "\uf063"
               iconSize: Style.font.icon
               tooltipText: "10 px down"
-              enabled: root.bongo && root.bongo.catActive
+              enabled: root.catOn
               opacity: enabled ? 1 : 0.38
               bordered: true
               focusable: true
@@ -696,7 +757,7 @@ Panel {
               glyph: "\uf061"
               iconSize: Style.font.icon
               tooltipText: "10 px right"
-              enabled: root.bongo && root.bongo.catActive
+              enabled: root.catOn
               opacity: enabled ? 1 : 0.38
               bordered: true
               focusable: true
@@ -709,14 +770,15 @@ Panel {
               width: positionActions.controlWidth
               height: positionActions.controlHeight
               text: "Reset"
-              enabled: root.bongo && root.bongo.catActive
+              enabled: root.catOn
               opacity: enabled ? 1 : 0.38
               bordered: true
               focusable: true
               foreground: root.foreground
               accent: root.accent
               fontFamily: root.fontFamily
-              onClicked: root.bongo.resetPosition()
+              onClicked: root.bongo ? root.bongo.resetPosition()
+                : root.persist({ positionX: -1, positionY: -1 })
             }
           }
 
@@ -747,6 +809,7 @@ Panel {
                 fontFamily: root.fontFamily
                 onModified: function(next) {
                   if (root.bongo) root.bongo.setKeypressDuration(next)
+                  else root.persist({ keypressDuration: next })
                 }
               }
             }
@@ -772,6 +835,7 @@ Panel {
                 fontFamily: root.fontFamily
                 onChanged: function(next) {
                   if (root.bongo) root.bongo.setMonitorName(next)
+                  else root.persist({ monitorName: next })
                 }
               }
             }
@@ -805,7 +869,8 @@ Panel {
                 background: root.background
                 accent: root.accent
                 fontFamily: root.fontFamily
-                onClicked: if (root.bongo) root.bongo.setWorkspaceId(0)
+                onClicked: root.bongo ? root.bongo.setWorkspaceId(0)
+                  : root.persist({ workspaceId: 0 })
               }
 
               Repeater {
@@ -826,8 +891,8 @@ Panel {
                   background: root.background
                   accent: root.accent
                   fontFamily: root.fontFamily
-                  onClicked: if (root.bongo)
-                    root.bongo.setWorkspaceId(workspaceNumber)
+                  onClicked: root.bongo ? root.bongo.setWorkspaceId(workspaceNumber)
+                    : root.persist({ workspaceId: workspaceNumber })
                 }
               }
             }
