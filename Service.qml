@@ -20,6 +20,7 @@ Item {
   readonly property string accessScript: localPath("helper/input-access")
   readonly property string pendingSettingsPath: runtimeHome
     + "/omarchy/bongocat/pending-settings.json"
+  readonly property string configPath: home + "/.config/omarchy/shell.json"
 
   property var pluginSettings: ({})
   property int panelSessionCount: 0
@@ -175,17 +176,29 @@ Item {
   }
 
   function settingsFromShell() {
-    return shell ? settingsFromConfig(shell.shellConfig) : null
+    if (shell && shell.shellConfig) {
+      var fromShell = settingsFromConfig(shell.shellConfig)
+      if (fromShell) return fromShell
+    }
+    return settingsFromConfig(shellConfigFromDisk())
   }
 
   function shellConfigFromDisk() {
-    if (!shell || String(shell.userConfigPath || "") === "") return null
     shellConfigProbe.reload()
     try {
       return JSON.parse(String(shellConfigProbe.text()))
     } catch (error) {
       console.warn("Bongo Cat could not read the latest shell settings")
       return null
+    }
+  }
+
+  function applyDiskConfig(raw) {
+    if (settingsDirty) return
+    try {
+      var found = settingsFromConfig(JSON.parse(String(raw || "")))
+      if (found) applySettings(found)
+    } catch (error) {
     }
   }
 
@@ -681,6 +694,7 @@ Item {
   Component.onCompleted: {
     applySettings(defaults())
     loadPendingJournal(pendingSettingsFile.text())
+    applyDiskConfig(shellConfigProbe.text())
     scanDevices()
     updateInputProcess()
     checkInputAccess()
@@ -700,13 +714,17 @@ Item {
 
   FileView {
     id: shellConfigProbe
-    path: root.shell ? root.shell.userConfigPath : ""
+    path: root.configPath
     preload: false
     blockLoading: true
     blockAllReads: true
     watchChanges: true
     printErrors: false
-    onLoaded: root.verifyPersistedSettings(text())
+    onLoaded: {
+      var raw = text()
+      root.verifyPersistedSettings(raw)
+      root.applyDiskConfig(raw)
+    }
     onFileChanged: reload()
   }
 

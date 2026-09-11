@@ -22,6 +22,7 @@ Panel {
   readonly property color accent: bar ? bar.urgent : Color.accent
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.58)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  property var localPatch: ({})
   readonly property var activeScreen: hasService() ? bongo.targetScreen() : null
   readonly property int positionXValue: hasService() && activeScreen
     ? Math.round(bongo.resolvedX(activeScreen))
@@ -35,12 +36,23 @@ Panel {
     ? Math.max(0, activeScreen.height - bongo.catHeight) : 8000
   readonly property bool presentationSuppressed: hasService()
     ? bongo.presentationSuppressed : false
-  readonly property bool catOn: hasService() ? bongo.catActive : setting("active", true) !== false
-  readonly property int catSize: hasService() ? bongo.catWidth : setting("catWidth", 280)
-  readonly property string catColorMode: hasService() ? bongo.colorMode : setting("colorMode", "default")
-  readonly property bool catLocked: hasService() ? bongo.positionLocked : setting("positionLocked", true) !== false
+  readonly property bool catOn: bongo && typeof bongo.setCatWidth === "function"
+    ? bongo.catActive
+    : (localPatch.active !== undefined ? localPatch.active !== false
+      : (settings && settings.active !== undefined ? settings.active !== false : true))
+  readonly property int catSize: bongo && typeof bongo.setCatWidth === "function"
+    ? bongo.catWidth
+    : (localPatch.catWidth !== undefined ? localPatch.catWidth
+      : (settings && settings.catWidth !== undefined ? settings.catWidth : 280))
+  readonly property string catColorMode: bongo && typeof bongo.setCatWidth === "function"
+    ? bongo.colorMode
+    : (localPatch.colorMode !== undefined ? localPatch.colorMode
+      : (settings && settings.colorMode !== undefined ? settings.colorMode : "default"))
+  readonly property bool catLocked: bongo && typeof bongo.setCatWidth === "function"
+    ? bongo.positionLocked
+    : (localPatch.positionLocked !== undefined ? localPatch.positionLocked !== false
+      : (settings && settings.positionLocked !== undefined ? settings.positionLocked !== false : true))
   property var panelSessionService: null
-  property var localPatch: ({})
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
