@@ -12,32 +12,35 @@ Panel {
   ipcTarget: ""
   manageIpc: false
 
-  readonly property var bongo: bar && bar.shell
-    && typeof bar.shell.serviceFor === "function"
-    ? bar.shell.serviceFor(moduleName) : null
+  readonly property var bongo: {
+    if (!bar || !bar.shell || typeof bar.shell.serviceFor !== "function") return null
+    var svc = bar.shell.serviceFor(moduleName)
+    return svc && typeof svc.setCatWidth === "function" ? svc : null
+  }
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color background: bar ? bar.background : Color.background
   readonly property color accent: bar ? bar.urgent : Color.accent
   readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.58)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property var activeScreen: bongo ? bongo.targetScreen() : null
-  readonly property int positionXValue: bongo && activeScreen
+  readonly property var activeScreen: hasService() ? bongo.targetScreen() : null
+  readonly property int positionXValue: hasService() && activeScreen
     ? Math.round(bongo.resolvedX(activeScreen))
     : Math.max(0, setting("positionX", 0))
-  readonly property int positionYValue: bongo && activeScreen
+  readonly property int positionYValue: hasService() && activeScreen
     ? Math.round(bongo.resolvedY(activeScreen))
     : Math.max(0, setting("positionY", 0))
-  readonly property int positionXMaximum: bongo && activeScreen
+  readonly property int positionXMaximum: hasService() && activeScreen
     ? Math.max(0, activeScreen.width - bongo.catWidth) : 8000
-  readonly property int positionYMaximum: bongo && activeScreen
+  readonly property int positionYMaximum: hasService() && activeScreen
     ? Math.max(0, activeScreen.height - bongo.catHeight) : 8000
-  readonly property bool presentationSuppressed: bongo
+  readonly property bool presentationSuppressed: hasService()
     ? bongo.presentationSuppressed : false
-  readonly property bool catOn: bongo ? bongo.catActive : setting("active", true) !== false
-  readonly property int catSize: bongo ? bongo.catWidth : setting("catWidth", 280)
-  readonly property string catColorMode: bongo ? bongo.colorMode : setting("colorMode", "default")
-  readonly property bool catLocked: bongo ? bongo.positionLocked : setting("positionLocked", true) !== false
+  readonly property bool catOn: hasService() ? bongo.catActive : setting("active", true) !== false
+  readonly property int catSize: hasService() ? bongo.catWidth : setting("catWidth", 280)
+  readonly property string catColorMode: hasService() ? bongo.colorMode : setting("colorMode", "default")
+  readonly property bool catLocked: hasService() ? bongo.positionLocked : setting("positionLocked", true) !== false
   property var panelSessionService: null
+  property var localPatch: ({})
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -45,7 +48,7 @@ Panel {
   onOpenedChanged: {
     if (opened) {
       beginPanelSession()
-      if (bongo) {
+      if (hasService()) {
         bongo.checkInputAccess()
         bongo.scanDevices()
       }
@@ -59,8 +62,15 @@ Panel {
   onPresentationSuppressedChanged: if (presentationSuppressed) close()
   Component.onDestruction: abandonPanelSession()
 
+
+  function hasService() {
+    return !!(bongo && typeof bongo.setCatWidth === "function")
+  }
+
   function setting(key, fallback) {
-    if (bongo && bongo[key] !== undefined && bongo[key] !== null)
+    if (localPatch && localPatch[key] !== undefined && localPatch[key] !== null)
+      return localPatch[key]
+    if (hasService() && bongo[key] !== undefined && bongo[key] !== null)
       return bongo[key]
     if (settings && settings[key] !== undefined && settings[key] !== null)
       return settings[key]
@@ -68,20 +78,47 @@ Panel {
   }
 
   function persist(patch) {
-    if (bongo) return false
+    var merged = {}
+    var key
+    for (key in localPatch) merged[key] = localPatch[key]
+    for (key in patch) merged[key] = patch[key]
+    localPatch = merged
+
     var host = bar && bar.shell
-    if (!host || typeof host.updateEntryInline !== "function") return false
+    if (!host) return false
+
+    if (typeof host.mutateShellConfig === "function") {
+      return host.mutateShellConfig(function(config) {
+        if (!config.bar) config.bar = {}
+        if (!config.bar.layout) return
+        var sections = ["left", "center", "right"]
+        for (var s = 0; s < sections.length; s++) {
+          var arr = config.bar.layout[sections[s]]
+          if (!Array.isArray(arr)) continue
+          for (var i = 0; i < arr.length; i++) {
+            var entry = arr[i]
+            var id = entry && typeof entry === "object" ? entry.id : entry
+            if (String(id || "") !== moduleName) continue
+            if (typeof entry !== "object") arr[i] = entry = { id: moduleName }
+            for (var pk in patch) entry[pk] = patch[pk]
+            return
+          }
+        }
+      })
+    }
+
+    if (typeof host.updateEntryInline !== "function") return false
     var next = { id: moduleName }
     var src = settings || {}
-    for (var key in src) {
+    for (key in src) {
       if (key !== "id") next[key] = src[key]
     }
-    for (var patchKey in patch) next[patchKey] = patch[patchKey]
+    for (key in merged) next[key] = merged[key]
     return host.updateEntryInline(moduleName, next)
   }
 
   function beginPanelSession() {
-    if (panelSessionService || !bongo
+    if (panelSessionService || !hasService()
         || typeof bongo.beginPanelSession !== "function") return
     panelSessionService = bongo
     panelSessionService.beginPanelSession()
@@ -102,12 +139,12 @@ Panel {
   }
 
   function toggleActive() {
-    if (bongo) bongo.setCatActive(!bongo.catActive)
+    if (hasService()) bongo.setCatActive(!bongo.catActive)
     else persist({ active: !catOn })
   }
 
   function moveFromPanel(dx, dy) {
-    if (bongo) bongo.setPosition(positionXValue + dx, positionYValue + dy)
+    if (hasService()) bongo.setPosition(positionXValue + dx, positionYValue + dy)
     else persist({
       positionX: Math.max(0, positionXValue + dx),
       positionY: Math.max(0, positionYValue + dy)
@@ -115,27 +152,28 @@ Panel {
   }
 
   function applyCatWidth(value) {
-    if (bongo) bongo.setCatWidth(value)
-    else persist({ catWidth: Math.max(60, Math.min(640, parseInt(value, 10) || 280)) })
+    var n = Math.max(60, Math.min(640, parseInt(value, 10) || 280))
+    if (hasService()) bongo.setCatWidth(n)
+    else persist({ catWidth: n })
   }
 
   function applyColorMode(value) {
-    if (bongo) bongo.setColorMode(value)
+    if (hasService()) bongo.setColorMode(value)
     else persist({ colorMode: value })
   }
 
   function applyPositionLocked(value) {
-    if (bongo) bongo.setPositionLocked(value)
+    if (hasService()) bongo.setPositionLocked(value)
     else persist({ positionLocked: !!value })
   }
 
   function applyPosition(x, y) {
-    if (bongo) bongo.setPosition(x, y)
+    if (hasService()) bongo.setPosition(x, y)
     else persist({ positionX: Math.max(0, x), positionY: Math.max(0, y) })
   }
 
   function applyCustomColor(value) {
-    if (bongo) bongo.setCustomColor(value)
+    if (hasService()) bongo.setCustomColor(value)
     else persist({ customColor: value, colorMode: "hex" })
   }
 
