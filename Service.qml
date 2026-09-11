@@ -20,7 +20,6 @@ Item {
   readonly property string accessScript: localPath("helper/input-access")
   readonly property string pendingSettingsPath: runtimeHome
     + "/omarchy/bongocat/pending-settings.json"
-  readonly property string configPath: home + "/.config/omarchy/shell.json"
 
   property var pluginSettings: ({})
   property int panelSessionCount: 0
@@ -176,29 +175,17 @@ Item {
   }
 
   function settingsFromShell() {
-    if (shell && shell.shellConfig) {
-      var fromShell = settingsFromConfig(shell.shellConfig)
-      if (fromShell) return fromShell
-    }
-    return settingsFromConfig(shellConfigFromDisk())
+    return shell ? settingsFromConfig(shell.shellConfig) : null
   }
 
   function shellConfigFromDisk() {
+    if (!shell || String(shell.userConfigPath || "") === "") return null
     shellConfigProbe.reload()
     try {
       return JSON.parse(String(shellConfigProbe.text()))
     } catch (error) {
       console.warn("Bongo Cat could not read the latest shell settings")
       return null
-    }
-  }
-
-  function applyDiskConfig(raw) {
-    if (settingsDirty) return
-    try {
-      var found = settingsFromConfig(JSON.parse(String(raw || "")))
-      if (found) applySettings(found)
-    } catch (error) {
     }
   }
 
@@ -351,6 +338,10 @@ Item {
   function persistPendingSettings() {
     if (!settingsDirty) return
     writePendingJournal()
+    if (!shell || typeof shell.persistShellConfig !== "function") {
+      persistenceRetryTimer.restart()
+      return
+    }
     var diskConfig = shellConfigFromDisk()
     var diskSettings = settingsFromConfig(diskConfig)
     if (!diskSettings) {
@@ -377,18 +368,9 @@ Item {
     persistVerificationPatch = verification
     persistVerificationPending = true
     persistVerificationAttempts = 0
-    if (shell && typeof shell.persistShellConfig === "function") {
-      try {
-        shell.persistShellConfig(nextConfig)
-        persistenceVerificationTimer.restart()
-      } catch (error) {
-        console.warn("Bongo Cat could not persist shell settings")
-        retryUnverifiedPersistence()
-      }
-      return
-    }
     try {
-      shellConfigProbe.setText(JSON.stringify(nextConfig, null, 2) + "\n")
+      shell.persistShellConfig(nextConfig)
+      persistenceVerificationTimer.restart()
     } catch (error) {
       console.warn("Bongo Cat could not persist shell settings")
       retryUnverifiedPersistence()
@@ -699,7 +681,6 @@ Item {
   Component.onCompleted: {
     applySettings(defaults())
     loadPendingJournal(pendingSettingsFile.text())
-    applyDiskConfig(shellConfigProbe.text())
     scanDevices()
     updateInputProcess()
     checkInputAccess()
@@ -719,17 +700,13 @@ Item {
 
   FileView {
     id: shellConfigProbe
-    path: root.configPath
+    path: root.shell ? root.shell.userConfigPath : ""
     preload: false
     blockLoading: true
     blockAllReads: true
     watchChanges: true
     printErrors: false
-    onLoaded: {
-      var raw = text()
-      root.verifyPersistedSettings(raw)
-      root.applyDiskConfig(raw)
-    }
+    onLoaded: root.verifyPersistedSettings(text())
     onFileChanged: reload()
   }
 
@@ -823,12 +800,16 @@ Item {
     function rescan(): void { root.scanDevices(); root.updateInputProcess() }
     function allowInput(): void { root.setInputAccess(true) }
     function revokeInput(): void { root.setInputAccess(false) }
+    function move(x: int, y: int): void { root.setPosition(x, y) }
+    function color(mode: string): void { root.setColorMode(mode) }
+    function hex(value: string): void { root.setCustomColor(value) }
+    function keyboard(name: string): void { root.setKeyboardName(name) }
+    function keyboards(): string { return JSON.stringify(root.keyboardOptions()) }
     function patch(json: string): void {
       try {
         var parsed = JSON.parse(json)
         if (parsed && typeof parsed === "object") root.patchSettings(parsed)
       } catch (error) {
-        console.warn("Bongo Cat IPC patch rejected")
       }
     }
     function status(): string {
