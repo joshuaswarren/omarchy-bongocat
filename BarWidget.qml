@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -95,38 +96,18 @@ Panel {
     for (key in localPatch) merged[key] = localPatch[key]
     for (key in patch) merged[key] = patch[key]
     localPatch = merged
+    sendPatch(patch)
+  }
 
-    var host = bar && bar.shell
-    if (!host) return false
+  function sendPatch(patch) {
+    if (hasService()) return
+    serviceIpc.running = false
+    serviceIpc.command = ["omarchy-shell", moduleName, "patch", JSON.stringify(patch)]
+    serviceIpc.running = true
+  }
 
-    if (typeof host.mutateShellConfig === "function") {
-      return host.mutateShellConfig(function(config) {
-        if (!config.bar) config.bar = {}
-        if (!config.bar.layout) return
-        var sections = ["left", "center", "right"]
-        for (var s = 0; s < sections.length; s++) {
-          var arr = config.bar.layout[sections[s]]
-          if (!Array.isArray(arr)) continue
-          for (var i = 0; i < arr.length; i++) {
-            var entry = arr[i]
-            var id = entry && typeof entry === "object" ? entry.id : entry
-            if (String(id || "") !== moduleName) continue
-            if (typeof entry !== "object") arr[i] = entry = { id: moduleName }
-            for (var pk in patch) entry[pk] = patch[pk]
-            return
-          }
-        }
-      })
-    }
-
-    if (typeof host.updateEntryInline !== "function") return false
-    var next = { id: moduleName }
-    var src = settings || {}
-    for (key in src) {
-      if (key !== "id") next[key] = src[key]
-    }
-    for (key in merged) next[key] = merged[key]
-    return host.updateEntryInline(moduleName, next)
+  Process {
+    id: serviceIpc
   }
 
   function beginPanelSession() {

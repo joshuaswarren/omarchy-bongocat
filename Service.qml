@@ -351,10 +351,6 @@ Item {
   function persistPendingSettings() {
     if (!settingsDirty) return
     writePendingJournal()
-    if (!shell || typeof shell.persistShellConfig !== "function") {
-      persistenceRetryTimer.restart()
-      return
-    }
     var diskConfig = shellConfigFromDisk()
     var diskSettings = settingsFromConfig(diskConfig)
     if (!diskSettings) {
@@ -381,9 +377,18 @@ Item {
     persistVerificationPatch = verification
     persistVerificationPending = true
     persistVerificationAttempts = 0
+    if (shell && typeof shell.persistShellConfig === "function") {
+      try {
+        shell.persistShellConfig(nextConfig)
+        persistenceVerificationTimer.restart()
+      } catch (error) {
+        console.warn("Bongo Cat could not persist shell settings")
+        retryUnverifiedPersistence()
+      }
+      return
+    }
     try {
-      shell.persistShellConfig(nextConfig)
-      persistenceVerificationTimer.restart()
+      shellConfigProbe.setText(JSON.stringify(nextConfig, null, 2) + "\n")
     } catch (error) {
       console.warn("Bongo Cat could not persist shell settings")
       retryUnverifiedPersistence()
@@ -818,6 +823,14 @@ Item {
     function rescan(): void { root.scanDevices(); root.updateInputProcess() }
     function allowInput(): void { root.setInputAccess(true) }
     function revokeInput(): void { root.setInputAccess(false) }
+    function patch(json: string): void {
+      try {
+        var parsed = JSON.parse(json)
+        if (parsed && typeof parsed === "object") root.patchSettings(parsed)
+      } catch (error) {
+        console.warn("Bongo Cat IPC patch rejected")
+      }
+    }
     function status(): string {
       return JSON.stringify({
         active: root.catActive,
