@@ -25,12 +25,24 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   property var localPatch: ({})
   readonly property var activeScreen: hasService() ? bongo.targetScreen() : null
-  readonly property int positionXValue: hasService() && activeScreen
-    ? Math.round(bongo.resolvedX(activeScreen))
-    : Math.max(0, setting("positionX", 0))
-  readonly property int positionYValue: hasService() && activeScreen
-    ? Math.round(bongo.resolvedY(activeScreen))
-    : Math.max(0, setting("positionY", 0))
+  readonly property int positionXValue: {
+    if (bongo && typeof bongo.setCatWidth === "function" && activeScreen)
+      return Math.round(bongo.resolvedX(activeScreen))
+    if (localPatch.positionX !== undefined && localPatch.positionX !== null)
+      return Math.max(0, Number(localPatch.positionX))
+    if (settings && settings.positionX !== undefined && settings.positionX !== null)
+      return Math.max(0, Number(settings.positionX))
+    return 0
+  }
+  readonly property int positionYValue: {
+    if (bongo && typeof bongo.setCatWidth === "function" && activeScreen)
+      return Math.round(bongo.resolvedY(activeScreen))
+    if (localPatch.positionY !== undefined && localPatch.positionY !== null)
+      return Math.max(0, Number(localPatch.positionY))
+    if (settings && settings.positionY !== undefined && settings.positionY !== null)
+      return Math.max(0, Number(settings.positionY))
+    return 0
+  }
   readonly property int positionXMaximum: hasService() && activeScreen
     ? Math.max(0, activeScreen.width - bongo.catWidth) : 8000
   readonly property int positionYMaximum: hasService() && activeScreen
@@ -57,9 +69,9 @@ Panel {
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
-
   onOpenedChanged: {
     if (opened) {
+      seedPatchFromSettings()
       beginPanelSession()
       if (hasService()) {
         bongo.checkInputAccess()
@@ -101,13 +113,25 @@ Panel {
 
   function sendPatch(patch) {
     if (hasService()) return
+    var payload = JSON.stringify(patch)
     serviceIpc.running = false
-    serviceIpc.command = ["omarchy-shell", moduleName, "patch", JSON.stringify(patch)]
-    serviceIpc.running = true
+    serviceIpc.command = ["omarchy-shell", moduleName, "patch", payload]
+    Qt.callLater(function() { serviceIpc.running = true })
   }
 
-  Process {
-    id: serviceIpc
+  function seedPatchFromSettings() {
+    var seed = {}
+    var key
+    for (key in localPatch) seed[key] = localPatch[key]
+    var src = settings || {}
+    var keys = ["active", "catWidth", "colorMode", "customColor", "positionLocked",
+      "positionX", "positionY", "keypressDuration", "monitorName", "workspaceId"]
+    for (var i = 0; i < keys.length; i++) {
+      key = keys[i]
+      if (seed[key] === undefined && src[key] !== undefined && src[key] !== null)
+        seed[key] = src[key]
+    }
+    localPatch = seed
   }
 
   function beginPanelSession() {
@@ -161,8 +185,10 @@ Panel {
   }
 
   function applyPosition(x, y) {
-    if (hasService()) bongo.setPosition(x, y)
-    else persist({ positionX: Math.max(0, x), positionY: Math.max(0, y) })
+    var nx = Math.max(0, Math.round(Number(x)))
+    var ny = Math.max(0, Math.round(Number(y)))
+    if (hasService()) bongo.setPosition(nx, ny)
+    else persist({ positionX: nx, positionY: ny })
   }
 
   function applyCustomColor(value) {
