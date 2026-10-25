@@ -80,6 +80,7 @@ automatically at logout.
 
 ## Credits
 
+This is a fork of the [upstream Bongo Cat project](https://github.com/HANCORE-linux/omarchy-bongocat).
 The animation frames and paw mapping are derived from
 `saatvik333/wayland-bongocat`. See `THIRD_PARTY.md` and
 `LICENSE.wayland-bongocat`.
